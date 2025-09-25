@@ -175,13 +175,13 @@ class ReviewerGradeNow:
 
         # Add MeCab analysis if available and text contains Japanese
         if MECAB_AVAILABLE and self.contains_cjk(search_text):
-            lemmas = self.extract_lemmas_with_mecab(search_text)
+            lemmas, _ = self.extract_lemmas_with_mecab(search_text)  # Only need lemmas here
             all_terms.extend(lemmas)
 
             # Also get lemmas for sub-portions that contain Japanese
             for portion in self.extract_sub_portions(search_text):
                 if self.contains_cjk(portion):
-                    portion_lemmas = self.extract_lemmas_with_mecab(portion)
+                    portion_lemmas, _ = self.extract_lemmas_with_mecab(portion)  # Only need lemmas here
                     all_terms.extend(portion_lemmas)
 
         # Remove duplicates while preserving order
@@ -302,39 +302,40 @@ class ReviewerGradeNow:
         return morphemes
 
     def extract_lemmas_with_mecab(self, text):
-        """Extract lemmas (base forms) from Japanese text using MeCab subprocess"""
+        """Extract lemmas (base forms) from Japanese text using MeCab subprocess and return position mapping"""
         if not MECAB_AVAILABLE or not _mecab_base_cmd:
-            return []
+            return [], {}
 
         lemmas = []
+        positions = {}
 
         try:
-            # Use detailed output format to get lemma information
-            # Format: surface, features (POS, subPOS, etc.), lemma
-            cmd = _mecab_base_cmd + ["--node-format=%m\t%f[6]\t%f[7]\n", "--eos-format=", "--unk-format=%m\t*\t*\n"]
-
-            result = subprocess.run(cmd, input=text.strip(),
+            # Use MeCab default output format to get morphemes and positions in one call
+            result = subprocess.run(_mecab_base_cmd, input=text.strip(),
                                   capture_output=True, text=True,
                                   encoding=_mecab_encoding, timeout=5)
 
             if result.returncode != 0:
                 print("MeCab subprocess error (code {}): {}".format(result.returncode, result.stderr))
-                return []
+                return [], {}
 
             # Parse the output
             lines = result.stdout.strip().split('\n')
+            position = 0
 
             for line in lines:
-                if not line.strip():
+                if line == "EOS" or not line.strip():
                     continue
 
                 parts = line.split('\t')
-                if len(parts) >= 3:
-                    surface = parts[0]  # Original word
-                    reading = parts[1]  # Reading (position 6)
-                    lemma = parts[2]    # Dictionary form (position 7)
+                if len(parts) >= 2:
+                    surface = parts[0]  # Original word (今日, の, 試験, etc.)
+                    features = parts[1].split(',')
 
-                    # Add surface form
+                    # Extract lemma (base form) from features - it's at index 6
+                    lemma = features[6] if len(features) > 6 and features[6] != '*' else surface
+
+                    # Add surface form to lemmas list
                     if surface and surface not in lemmas:
                         lemmas.append(surface)
 
@@ -345,20 +346,27 @@ class ReviewerGradeNow:
                         lemma not in lemmas):
                         lemmas.append(lemma)
 
-                    # Add reading if different and meaningful (for katakana/hiragana matching)
-                    if (reading and
-                        reading != '*' and
-                        reading != surface and
-                        reading != lemma and
-                        reading not in lemmas):
-                        lemmas.append(reading)
+                    # Store positions for both surface form and lemma
+                    if surface and surface not in positions:
+                        positions[surface] = position
+
+                    if lemma and lemma != surface and lemma not in positions:
+                        positions[lemma] = position
+
+                    # Also store lowercase versions for case-insensitive matching
+                    if surface.lower() not in positions:
+                        positions[surface.lower()] = position
+                    if lemma.lower() != surface.lower() and lemma.lower() not in positions:
+                        positions[lemma.lower()] = position
+
+                    position += 1
 
         except subprocess.TimeoutExpired:
             print("MeCab subprocess timed out")
         except Exception as e:
             print("MeCab parsing error: {}".format(e))
 
-        return lemmas
+        return lemmas, positions
 
     def contains_cjk(self, text):
         """Check if text contains CJK (Chinese, Japanese, Korean) characters"""
@@ -462,45 +470,75 @@ class GradeDialog(QDialog):
 
     def populate_cards_list(self):
         """Populate the list with matching cards"""
-        # Get MeCab lemmas for the search text to identify base form matches
+        # Get MeCab lemmas and positions for the search text in one call
         mecab_lemmas = []
+        morpheme_positions = {}
+
         if MECAB_AVAILABLE:
             # Get the reviewer instance to access the method
             reviewer = reviewer_grade_now
             if reviewer.contains_cjk(self.search_text):
-                mecab_lemmas = reviewer.extract_lemmas_with_mecab(self.search_text)
+                mecab_lemmas, morpheme_positions = reviewer.extract_lemmas_with_mecab(self.search_text)
+
+        # Create list of cards with their position information
+        card_position_data = []
 
         for card_id in self.card_ids:
             card = mw.col.getCard(card_id)
             note = card.note()
 
-            # Get the content of the search field and reading field
-            # Use proper Anki Note field access with error handling
+            # Get the content of the search field
             try:
                 field_content = note[self.config["search_field"]] if self.config["search_field"] in note else ""
             except (KeyError, IndexError):
                 field_content = ""
+
+            # Find position of this card's content in the selected text
+            position = self.find_card_position_in_text(field_content, mecab_lemmas, morpheme_positions)
+
+            card_position_data.append({
+                'card_id': card_id,
+                'card': card,
+                'note': note,
+                'field_content': field_content,
+                'position': position
+            })
+
+        # Sort cards by their position in the selected text
+        card_position_data.sort(key=lambda x: x['position'])
+
+        # Now populate the list with sorted cards
+        for card_data in card_position_data:
+            card_id = card_data['card_id']
+            card = card_data['card']
+            note = card_data['note']
+            field_content = card_data['field_content']
 
             try:
                 reading_content = note["Reading"] if "Reading" in note else ""
             except (KeyError, IndexError):
                 reading_content = ""
 
-            # Create display text with both Front and Reading
+            # Get card interval information
+            interval_info = self.get_card_interval_info(card)
+
+            # Create display text with Front, Reading, and Interval
             # Use format instead of f-string for compatibility
             if reading_content:
-                display_text = "Card {}: {}{}| Reading: {}{}".format(
+                display_text = "Card {}: {}{}| Reading: {}{} | {}".format(
                     card_id,
-                    field_content[:60],
-                    '...' if len(field_content) > 60 else ' ',
-                    reading_content[:30],
-                    '...' if len(reading_content) > 30 else ''
+                    field_content[:50],
+                    '...' if len(field_content) > 50 else ' ',
+                    reading_content[:25],
+                    '...' if len(reading_content) > 25 else '',
+                    interval_info
                 )
             else:
-                display_text = "Card {}: {}{}".format(
+                display_text = "Card {}: {}{} | {}".format(
                     card_id,
-                    field_content[:80],
-                    '...' if len(field_content) > 80 else ''
+                    field_content[:65],
+                    '...' if len(field_content) > 65 else '',
+                    interval_info
                 )
 
             item = QListWidgetItem(display_text)
@@ -527,44 +565,100 @@ class GradeDialog(QDialog):
                 item.setCheckState(CHECKED)
                 item.setBackground(QColor("#2d5a2d"))  # Dark green
                 item.setForeground(QColor("#ffffff"))
-                item.setToolTip("Exact match with selected text: '{}'".format(search_text_clean))
+                item.setToolTip("Exact match with selected text: '{}' | {}".format(search_text_clean, interval_info))
 
             elif is_mecab_base_match:
                 # MeCab base form match - golden/amber highlight
                 item.setCheckState(CHECKED)
                 item.setBackground(QColor("#8B6914"))  # Dark golden brown
                 item.setForeground(QColor("#ffffff"))
-                item.setToolTip("Base form match via MeCab analysis")
+                item.setToolTip("Base form match via MeCab analysis | {}".format(interval_info))
 
             else:
                 # Fuzzy/sub-portion match - brownish
                 item.setCheckState(UNCHECKED)
                 item.setBackground(QColor("#5a4a2d"))  # Dark brown
                 item.setForeground(QColor("#ffffff"))
-                item.setToolTip("Partial match or sub-portion")
+                item.setToolTip("Partial match or sub-portion | {}".format(interval_info))
 
             self.cards_list.addItem(item)
 
+    def find_card_position_in_text(self, field_content, mecab_lemmas, morpheme_positions):
+        """Find the position where this card's content appears in the selected text"""
+        if not field_content or not field_content.strip():
+            return float('inf')  # Cards with no content go to the end
+
+        field_content_clean = field_content.strip()
+
+        # If we have MeCab analysis, use the pre-computed morpheme positions
+        if MECAB_AVAILABLE and reviewer_grade_now.contains_cjk(self.search_text) and morpheme_positions:
+            # Check for exact matches in the morpheme position map
+            for key in [field_content_clean, field_content_clean.lower()]:
+                if key in morpheme_positions:
+                    return morpheme_positions[key]
+
+            # If no direct match, return high number but not infinity
+            return 999999
+
+        # For non-CJK text, simple substring search
+        search_text_lower = self.search_text.lower()
+        exact_pos = search_text_lower.find(field_content_clean.lower())
+        return exact_pos if exact_pos != -1 else 999999
+
+    def get_card_interval_info(self, card):
+        """Get interval information for a card"""
+        try:
+            if card.type == 0:  # New card
+                return "New (never reviewed)"
+            elif card.type == 1:  # Learning card
+                return "Learning ({}m left)".format(card.left // 60 if card.left else 0)
+            elif card.type == 2:  # Review card
+                if card.ivl == 0:
+                    return "Review (same day)"
+                elif card.ivl == 1:
+                    return "Review (1 day)"
+                else:
+                    return "Review ({} days)".format(card.ivl)
+            elif card.type == 3:  # Relearning card
+                return "Relearning ({}m left)".format(card.left // 60 if card.left else 0)
+            else:
+                return "Unknown type"
+        except Exception as e:
+            return "Interval: unknown"
+
     def grade_selected_cards(self, grade):
         """Grade the selected cards"""
-        selected_card_ids = []
-
-        for i in range(self.cards_list.count()):
-            item = self.cards_list.item(i)
-            if item.checkState() == CHECKED:
-                card_id = item.data(USER_ROLE)
-                selected_card_ids.append(card_id)
-
-        if not selected_card_ids:
-            showInfo("No cards selected")
-            return
-
-        if not askUser("Grade {} cards with grade {}?".format(len(selected_card_ids), grade)):
-            return
-
         try:
-            grade_now(parent=self, card_ids=selected_card_ids, ease=grade, dialog=self)
-            showInfo("Successfully graded {} cards".format(len(selected_card_ids)))
+            # Get selected cards
+            selected_cards = []
+            for i in range(self.cards_list.count()):
+                item = self.cards_list.item(i)
+                if item.checkState() == CHECKED:
+                    card_id = item.data(USER_ROLE)
+                    selected_cards.append(card_id)
+
+            if not selected_cards:
+                showInfo("No cards selected. Please select cards to grade.")
+                return
+
+            # Grade each selected card
+            graded_count = 0
+            for card_id in selected_cards:
+                try:
+                    card = mw.col.getCard(card_id)
+                    # Use Anki's reviewer grading system
+                    mw.reviewer._answerCard(grade)
+                    graded_count += 1
+                except Exception as e:
+                    print("Error grading card {}: {}".format(card_id, e))
+                    continue
+
+            # Show completion message
+            grade_names = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
+            grade_name = grade_names.get(grade, str(grade))
+            showInfo("Graded {} cards as '{}'".format(graded_count, grade_name))
+
+            # Close the dialog
             self.close()
 
         except Exception as e:
