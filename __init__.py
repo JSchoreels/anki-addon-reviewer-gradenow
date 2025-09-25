@@ -16,6 +16,58 @@ from anki.utils import ids2str
 from aqt import gui_hooks
 import json
 import re
+import subprocess
+import functools
+
+# MeCab integration for Japanese morphological analysis
+_MECAB_NODE_PARTS = ["%f[6]", "%m", "%f[7]", "%f[0]", "%f[1]", "%f[10]"]  # lemma, surface, reading, pos, subpos, alt_lemma
+_MECAB_ARGS = [
+    "--node-format={}\t".format("\t".join(_MECAB_NODE_PARTS)),
+    "--eos-format=\n",
+    "--unk-format=",
+]
+
+MECAB_AVAILABLE = False
+_mecab_base_cmd = None
+_mecab_encoding = "utf-8"
+
+def setup_mecab_subprocess():
+    """Setup MeCab using subprocess (like the syntax highlighting addon)"""
+    global MECAB_AVAILABLE, _mecab_base_cmd, _mecab_encoding
+
+    try:
+        # Try to find MeCab command
+        mecab_commands = ["mecab", "/usr/local/bin/mecab", "/opt/homebrew/bin/mecab"]
+
+        for cmd in mecab_commands:
+            try:
+                # Test if MeCab is available
+                result = subprocess.run([cmd, "--version"],
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    _mecab_base_cmd = [cmd]
+
+                    # Get encoding info
+                    dict_info = subprocess.run([cmd, "-D"],
+                                             capture_output=True, text=True, timeout=5)
+                    if dict_info.returncode == 0:
+                        charset_match = re.search(r"^charset:\s*(.*)$", dict_info.stdout, re.M)
+                        if charset_match:
+                            _mecab_encoding = charset_match.group(1).strip()
+
+                    MECAB_AVAILABLE = True
+                    print("MeCab subprocess setup successful with command: {}".format(cmd))
+                    return
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+
+        print("MeCab command not found. Japanese morphological analysis will be disabled.")
+
+    except Exception as e:
+        print("MeCab subprocess setup failed: {}. Japanese morphological analysis will be disabled.".format(e))
+
+# Initialize MeCab using subprocess
+setup_mecab_subprocess()
 
 # Qt compatibility fix
 try:
@@ -51,7 +103,10 @@ class ReviewerGradeNow:
             config = mw.addonManager.getConfig(__name__)
             if config is None:
                 return default_config
-            return {**default_config, **config}
+            # Merge configs without using ** unpacking for compatibility
+            merged_config = default_config.copy()
+            merged_config.update(config)
+            return merged_config
         except:
             return default_config
 
@@ -79,7 +134,7 @@ class ReviewerGradeNow:
             if len(selected_text.strip()) > 30:
                 text_preview += "..."
 
-            action = menu.addAction(f"Grade matching cards: '{text_preview}'")
+            action = menu.addAction("Grade matching cards: '{}'".format(text_preview))
             action.triggered.connect(lambda: self.search_and_grade_cards(selected_text.strip()))
 
     def search_and_grade_cards(self, search_text):
@@ -102,27 +157,45 @@ class ReviewerGradeNow:
             card_ids = list(all_card_ids)
 
             if not card_ids:
-                showInfo(f"No cards found matching '{search_text}' or its sub-portions in field '{field_name}'")
+                showInfo("No cards found matching '{}' or its sub-portions in field '{}'".format(search_text, field_name))
                 return
 
             # Show grading dialog
             self.show_grade_dialog(card_ids, search_text)
 
         except Exception as e:
-            showInfo(f"Error searching cards: {str(e)}")
+            showInfo("Error searching cards: {}".format(str(e)))
 
     def build_search_queries(self, search_text, field_name, deck_filter):
         """Build search queries for original text and all sub-portions"""
         queries = []
 
-        # Get all search terms (original + sub-portions)
+        # Get all search terms (original + sub-portions + MeCab lemmas)
         all_terms = [search_text] + self.extract_sub_portions(search_text)
 
-        # Build queries for each term
+        # Add MeCab analysis if available and text contains Japanese
+        if MECAB_AVAILABLE and self.contains_cjk(search_text):
+            lemmas = self.extract_lemmas_with_mecab(search_text)
+            all_terms.extend(lemmas)
+
+            # Also get lemmas for sub-portions that contain Japanese
+            for portion in self.extract_sub_portions(search_text):
+                if self.contains_cjk(portion):
+                    portion_lemmas = self.extract_lemmas_with_mecab(portion)
+                    all_terms.extend(portion_lemmas)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_terms = []
         for term in all_terms:
-            if len(term.strip()) >= 1:
-                query = self._build_single_query(term, field_name, deck_filter)
-                queries.append(query)
+            if term not in seen and len(term.strip()) >= 1:
+                seen.add(term)
+                unique_terms.append(term)
+
+        # Build queries for each term
+        for term in unique_terms:
+            query = self._build_single_query(term, field_name, deck_filter)
+            queries.append(query)
 
         return queries
 
@@ -130,34 +203,162 @@ class ReviewerGradeNow:
         """Build a single search query for a given term"""
         # Build the field search part
         if self.config["exact_match"]:
-            field_query = f'"{field_name}:{term}"'
+            field_query = '"{0}:{1}"'.format(field_name, term)
         else:
-            field_query = f'{field_name}:*{term}*'
+            field_query = '{0}:*{1}*'.format(field_name, term)
 
         # Add deck filter if specified
         if deck_filter:
-            return f'deck:"{deck_filter}" {field_query}'
+            return 'deck:"{0}" {1}'.format(deck_filter, field_query)
         else:
             return field_query
 
     def extract_sub_portions(self, text):
-        """Extract all possible consecutive sub-portions from text for searching"""
-        portions = set()
+        """Extract meaningful portions from text using MeCab parsing if available, fallback to substring extraction"""
+        portions = []
         text = text.strip()
 
-        # Generate all consecutive substrings (sliding window approach)
-        # For "ABCDEF" this gives: A, AB, ABC, ABCD, ABCDE, ABCDEF, B, BC, BCD, BCDE, BCDEF, C, CD, CDE, CDEF, etc.
+        # Use MeCab parsing if available and text contains CJK characters
+        if MECAB_AVAILABLE and self.contains_cjk(text):
+            portions = self.extract_morphemes_with_mecab(text)
+            # If MeCab parsing succeeded, return the morphemes
+            if portions:
+                return portions
+
+        # Fallback to substring extraction for non-CJK text or if MeCab fails
+        portion_set = set()
         for start in range(len(text)):
             for end in range(start + 1, len(text) + 1):
                 substring = text[start:end]
-                # Only add substrings that are meaningful (not just whitespace)
                 if substring.strip():
-                    portions.add(substring.strip())
+                    portion_set.add(substring.strip())
 
         # Remove the original text from portions to avoid duplication
-        portions.discard(text)
+        portion_set.discard(text)
+        return list(portion_set)
 
-        return list(portions)
+    def extract_morphemes_with_mecab(self, text):
+        """Extract individual morphemes (words/particles) from Japanese text using MeCab"""
+        if not MECAB_AVAILABLE or not _mecab_base_cmd:
+            return []
+
+        morphemes = []
+
+        try:
+            # Use MeCab to break down the sentence into morphemes
+            cmd = _mecab_base_cmd + ["--node-format=%m\t%f[6]\t%f[7]\t%f[0]\n", "--eos-format=", "--unk-format=%m\t*\t*\t*\n"]
+
+            result = subprocess.run(cmd, input=text.strip(),
+                                  capture_output=True, text=True,
+                                  encoding=_mecab_encoding, timeout=5)
+
+            if result.returncode != 0:
+                print("MeCab morpheme extraction error (code {}): {}".format(result.returncode, result.stderr))
+                return []
+
+            # Parse the output to extract morphemes
+            lines = result.stdout.strip().split('\n')
+
+            for line in lines:
+                if not line.strip():
+                    continue
+
+                parts = line.split('\t')
+                if len(parts) >= 4:
+                    surface = parts[0]      # Original morpheme
+                    reading = parts[1]      # Reading (position 6)
+                    lemma = parts[2]        # Dictionary form (position 7)
+                    pos = parts[3]          # Part of speech (position 0)
+
+                    # Skip certain parts of speech that are less useful for searching
+                    skip_pos = ['記号', '補助記号', '空白']  # symbols, auxiliary symbols, whitespace
+                    if pos in skip_pos:
+                        continue
+
+                    # Add the surface form (original morpheme)
+                    if surface and surface not in morphemes:
+                        morphemes.append(surface)
+
+                    # Add dictionary form if different and meaningful
+                    if (lemma and
+                        lemma != '*' and
+                        lemma != surface and
+                        lemma not in morphemes):
+                        morphemes.append(lemma)
+
+                    # Add reading for hiragana/katakana matching
+                    if (reading and
+                        reading != '*' and
+                        reading != surface and
+                        reading != lemma and
+                        reading not in morphemes):
+                        morphemes.append(reading)
+
+        except subprocess.TimeoutExpired:
+            print("MeCab morpheme extraction timed out")
+        except Exception as e:
+            print("MeCab morpheme extraction error: {}".format(e))
+
+        return morphemes
+
+    def extract_lemmas_with_mecab(self, text):
+        """Extract lemmas (base forms) from Japanese text using MeCab subprocess"""
+        if not MECAB_AVAILABLE or not _mecab_base_cmd:
+            return []
+
+        lemmas = []
+
+        try:
+            # Use detailed output format to get lemma information
+            # Format: surface, features (POS, subPOS, etc.), lemma
+            cmd = _mecab_base_cmd + ["--node-format=%m\t%f[6]\t%f[7]\n", "--eos-format=", "--unk-format=%m\t*\t*\n"]
+
+            result = subprocess.run(cmd, input=text.strip(),
+                                  capture_output=True, text=True,
+                                  encoding=_mecab_encoding, timeout=5)
+
+            if result.returncode != 0:
+                print("MeCab subprocess error (code {}): {}".format(result.returncode, result.stderr))
+                return []
+
+            # Parse the output
+            lines = result.stdout.strip().split('\n')
+
+            for line in lines:
+                if not line.strip():
+                    continue
+
+                parts = line.split('\t')
+                if len(parts) >= 3:
+                    surface = parts[0]  # Original word
+                    reading = parts[1]  # Reading (position 6)
+                    lemma = parts[2]    # Dictionary form (position 7)
+
+                    # Add surface form
+                    if surface and surface not in lemmas:
+                        lemmas.append(surface)
+
+                    # Add dictionary form if different and meaningful
+                    if (lemma and
+                        lemma != '*' and
+                        lemma != surface and
+                        lemma not in lemmas):
+                        lemmas.append(lemma)
+
+                    # Add reading if different and meaningful (for katakana/hiragana matching)
+                    if (reading and
+                        reading != '*' and
+                        reading != surface and
+                        reading != lemma and
+                        reading not in lemmas):
+                        lemmas.append(reading)
+
+        except subprocess.TimeoutExpired:
+            print("MeCab subprocess timed out")
+        except Exception as e:
+            print("MeCab parsing error: {}".format(e))
+
+        return lemmas
 
     def contains_cjk(self, text):
         """Check if text contains CJK (Chinese, Japanese, Korean) characters"""
@@ -202,7 +403,7 @@ class GradeDialog(QDialog):
         layout = QVBoxLayout()
 
         # Info label with better styling
-        info_text = f"Found {len(self.card_ids)} cards matching '{self.search_text}'"
+        info_text = "Found {} cards matching '{}'".format(len(self.card_ids), self.search_text)
         info_label = QLabel(info_text)
         info_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 10px;")
         layout.addWidget(info_label)
@@ -261,6 +462,14 @@ class GradeDialog(QDialog):
 
     def populate_cards_list(self):
         """Populate the list with matching cards"""
+        # Get MeCab lemmas for the search text to identify base form matches
+        mecab_lemmas = []
+        if MECAB_AVAILABLE:
+            # Get the reviewer instance to access the method
+            reviewer = reviewer_grade_now
+            if reviewer.contains_cjk(self.search_text):
+                mecab_lemmas = reviewer.extract_lemmas_with_mecab(self.search_text)
+
         for card_id in self.card_ids:
             card = mw.col.getCard(card_id)
             note = card.note()
@@ -278,27 +487,61 @@ class GradeDialog(QDialog):
                 reading_content = ""
 
             # Create display text with both Front and Reading
+            # Use format instead of f-string for compatibility
             if reading_content:
-                display_text = f"Card {card_id}: {field_content[:60]}{'...' if len(field_content) > 60 else ''} | Reading: {reading_content[:30]}{'...' if len(reading_content) > 30 else ''}"
+                display_text = "Card {}: {}{}| Reading: {}{}".format(
+                    card_id,
+                    field_content[:60],
+                    '...' if len(field_content) > 60 else ' ',
+                    reading_content[:30],
+                    '...' if len(reading_content) > 30 else ''
+                )
             else:
-                display_text = f"Card {card_id}: {field_content[:80]}{'...' if len(field_content) > 80 else ''}"
+                display_text = "Card {}: {}{}".format(
+                    card_id,
+                    field_content[:80],
+                    '...' if len(field_content) > 80 else ''
+                )
 
             item = QListWidgetItem(display_text)
             item.setData(USER_ROLE, card_id)
             item.setFlags(item.flags() | ITEM_IS_USER_CHECKABLE)
 
-            # Check if this is a perfect match
-            is_perfect_match = field_content.strip().lower() == self.search_text.strip().lower()
+            # Determine match type and highlight accordingly
+            field_content_clean = field_content.strip()
+            search_text_clean = self.search_text.strip()
 
-            if is_perfect_match:
+            # Check for exact match with original search text
+            is_exact_match = field_content_clean.lower() == search_text_clean.lower()
+
+            # Check for MeCab base form match
+            is_mecab_base_match = False
+            if mecab_lemmas and field_content_clean:
+                for lemma in mecab_lemmas:
+                    if lemma != search_text_clean and field_content_clean == lemma:
+                        is_mecab_base_match = True
+                        break
+
+            if is_exact_match:
+                # Exact match with original search text - bright green
                 item.setCheckState(CHECKED)
-                # Use darker colors that work better in both light and dark modes
-                item.setBackground(QColor("#2d5a2d"))  # Dark green background for perfect matches
-                item.setForeground(QColor("#ffffff"))  # White text for better contrast
+                item.setBackground(QColor("#2d5a2d"))  # Dark green
+                item.setForeground(QColor("#ffffff"))
+                item.setToolTip("Exact match with selected text: '{}'".format(search_text_clean))
+
+            elif is_mecab_base_match:
+                # MeCab base form match - golden/amber highlight
+                item.setCheckState(CHECKED)
+                item.setBackground(QColor("#8B6914"))  # Dark golden brown
+                item.setForeground(QColor("#ffffff"))
+                item.setToolTip("Base form match via MeCab analysis")
+
             else:
-                item.setCheckState(UNCHECKED)  # Uncheck fuzzy matches by default
-                item.setBackground(QColor("#5a4a2d"))  # Dark brown/orange background for fuzzy matches
-                item.setForeground(QColor("#ffffff"))  # White text for better contrast
+                # Fuzzy/sub-portion match - brownish
+                item.setCheckState(UNCHECKED)
+                item.setBackground(QColor("#5a4a2d"))  # Dark brown
+                item.setForeground(QColor("#ffffff"))
+                item.setToolTip("Partial match or sub-portion")
 
             self.cards_list.addItem(item)
 
@@ -316,19 +559,19 @@ class GradeDialog(QDialog):
             showInfo("No cards selected")
             return
 
-        if not askUser(f"Grade {len(selected_card_ids)} cards with grade {grade}?"):
+        if not askUser("Grade {} cards with grade {}?".format(len(selected_card_ids), grade)):
             return
 
         try:
             grade_now(parent=self, card_ids=selected_card_ids, ease=grade, dialog=self)
-            showInfo(f"Successfully graded {len(selected_card_ids)} cards")
+            showInfo("Successfully graded {} cards".format(len(selected_card_ids)))
             self.close()
 
         except Exception as e:
-            showInfo(f"Error grading cards: {str(e)}")
+            showInfo("Error grading cards: {}".format(str(e)))
             # Show more detailed error for debugging
             import traceback
-            showInfo(f"Detailed error: {traceback.format_exc()}")
+            showInfo("Detailed error: {}".format(traceback.format_exc()))
 
 
 # Initialize the addon

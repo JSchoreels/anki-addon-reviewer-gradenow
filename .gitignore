@@ -1,42 +1,56 @@
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.env
-*.venv
-env/
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
-*.egg
-*.egg-info/
-dist/
-build/
-*.log
 
-# PyCharm
+# IDE
+.vscode/
 .idea/
-*.iml
-
-# macOS
-.DS_Store
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# Test coverage reports
-htmlcov/
-.coverage
-.tox/
-.cache/
-nosetests.xml
-coverage.xml
-*.cover
-*.pyc
-
-# Misc
 *.swp
 *.swo
+*~
 
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Anki addon specific
 *.ankiaddon
+test_*.py
+debug/
+logs/
+
+# Backup files
+*.bak
+*.backup
+*.orig
