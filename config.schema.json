@@ -1,0 +1,23 @@
+{
+    "target_deck": {
+        "type": "string",
+        "default": "",
+        "description": "Specific deck to search in (leave empty to search all decks)"
+    },
+    "search_field": {
+        "type": "string",
+        "default": "Front",
+        "description": "Field name to search in for matching text"
+    },
+    "case_sensitive": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether the search should be case sensitive"
+    },
+    "exact_match": {
+        "type": "boolean",
+        "default": true,
+        "description": "Whether to search for exact matches only (no wildcards)"
+    }
+}
+

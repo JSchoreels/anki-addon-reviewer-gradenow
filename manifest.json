@@ -1,0 +1,13 @@
+{
+    "package": "reviewer_gradenow",
+    "name": "Reviewer Grade Now",
+    "mod": 1663200000,
+    "min_point_version": 0,
+    "max_point_version": 0,
+    "branch_index": 0,
+    "targets": ["desktop"],
+    "description": "Right-click on card text in reviewer to find and grade matching cards",
+    "author": "Jonathan Schoreels",
+    "version": "1.0.0"
+}
+
