@@ -11,13 +11,13 @@ This addon allows you to right-click on selected text in the Anki reviewer to fi
 
 ## How to Use
 
-![grader.png](gradegr.png)
 1. In the Anki reviewer, select any text on the current card
 2. Right-click on the selected text
 3. Choose "Grade matching cards: [selected text]" from the context menu
 4. A dialog will show all cards that match the selected text
 5. Select which cards you want to grade (all are selected by default)
 6. Click one of the grade buttons: Again (1), Hard (2), Good (3), or Easy (4)
+![grader.png](grader.png)
 
 ## Configuration
 
