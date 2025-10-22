@@ -642,21 +642,12 @@ class GradeDialog(QDialog):
                 return
 
             # Grade each selected card
-            graded_count = 0
-            for card_id in selected_cards:
-                try:
-                    card = mw.col.getCard(card_id)
-                    # Use Anki's reviewer grading system
-                    mw.reviewer._answerCard(grade)
-                    graded_count += 1
-                except Exception as e:
-                    print("Error grading card {}: {}".format(card_id, e))
-                    continue
+            grade_now(parent=self, card_ids=selected_cards, ease=grade, dialog=self)
 
             # Show completion message
             grade_names = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
             grade_name = grade_names.get(grade, str(grade))
-            showInfo("Graded {} cards as '{}'".format(graded_count, grade_name))
+            showInfo("Graded {} cards as '{}'".format(len(selected_cards), grade_name))
 
             # Close the dialog
             self.close()
