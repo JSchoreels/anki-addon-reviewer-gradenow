@@ -48,9 +48,14 @@ def copy_addon_to_anki(anki_dir, addon_id):
     # Files to copy
     addon_files = [
         '__init__.py',
+        'grade_dialog.py',
+        'grading.py',
+        'mecab.py',
+        'search.py',
         'manifest.json',
         'config.json',
-        'config.schema.json'
+        'config.schema.json',
+        'docs/GRADING.MD',
     ]
 
     # Create target directory if it doesn't exist
@@ -61,6 +66,7 @@ def copy_addon_to_anki(anki_dir, addon_id):
     for file in addon_files:
         if os.path.exists(file):
             target_file = addon_target_dir / file
+            target_file.parent.mkdir(exist_ok=True)
             shutil.copy2(file, target_file)
             copied_files.append(file)
             print(f"Copied: {file} -> {target_file}")

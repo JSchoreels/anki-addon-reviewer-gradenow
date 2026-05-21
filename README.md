@@ -5,7 +5,7 @@ This addon allows you to right-click on selected text in the Anki reviewer to fi
 ## Features
 
 - Right-click on any selected text in the reviewer
-- Search for cards containing the selected text in a specified field (default: "Front")
+- Search for cards matching the selected text in a specified field (default: "Front")
 - Grade multiple matching cards at once with Again/Hard/Good/Easy options
 - Configurable search parameters
 
@@ -15,7 +15,7 @@ This addon allows you to right-click on selected text in the Anki reviewer to fi
 2. Right-click on the selected text
 3. Choose "Grade matching cards: [selected text]" from the context menu
 4. A dialog will show all cards that match the selected text
-5. Select which cards you want to grade (all are selected by default)
+5. Select which cards you want to grade
 6. Click one of the grade buttons: Again (1), Hard (2), Good (3), or Easy (4)
 ![grader.png](grader.png)
 
@@ -25,8 +25,7 @@ You can configure the addon through Anki's addon configuration:
 
 - **target_deck**: Specific deck to search in (leave empty to search all decks)
 - **search_field**: Field name to search in for matching text (default: "Front")
-- **case_sensitive**: Whether the search should be case sensitive (default: false)
-- **exact_match**: Whether to search for exact matches only, no wildcards (default: false)
+- **exact_match**: Whether to search for exact field matches only, no wildcards (default: true)
 
 ## Installation
 
@@ -43,4 +42,4 @@ You can configure the addon through Anki's addon configuration:
 
 - Only cards that are not suspended will be graded
 - The addon will save changes to your collection after grading
-- A confirmation dialog will appear before grading multiple cards
+- Exact matches and MeCab base-form matches are checked by default; token or partial matches are unchecked by default

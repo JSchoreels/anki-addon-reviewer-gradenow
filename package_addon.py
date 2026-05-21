@@ -38,10 +38,15 @@ def create_addon_package():
     # Files to include in the package
     addon_files = [
         '__init__.py',
+        'grade_dialog.py',
+        'grading.py',
+        'mecab.py',
+        'search.py',
         'manifest.json',
         'config.json',
         'config.schema.json',
-        'README.md'
+        'README.md',
+        'docs/GRADING.MD',
     ]
 
     # Check if all required files exist

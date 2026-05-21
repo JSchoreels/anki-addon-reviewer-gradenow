@@ -47,6 +47,8 @@ Thumbs.db
 # Anki addon specific
 *.ankiaddon
 test_*.py
+!test_grade_dialog.py
+!test_mecab.py
 debug/
 logs/
 
