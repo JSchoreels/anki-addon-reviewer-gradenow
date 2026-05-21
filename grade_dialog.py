@@ -71,6 +71,11 @@ class GradeDialog(QDialog):
         self.populate_cards_list()
         layout.addWidget(self.cards_list)
 
+        select_all_btn = QPushButton("Select all")
+        select_all_btn.setStyleSheet("padding: 6px 12px;")
+        select_all_btn.clicked.connect(self.select_all_cards)
+        layout.addWidget(select_all_btn)
+
         grade_label = QLabel("Choose Grade:")
         grade_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         layout.addWidget(grade_label)
@@ -166,6 +171,7 @@ class GradeDialog(QDialog):
         return item
 
     def apply_match_style(self, item, field_content, mecab_terms, interval_info):
+        item.setCheckState(UNCHECKED)
         field_content_clean = field_content.strip()
         search_text_clean = self.search_text.strip()
         is_exact_match = field_content_clean.lower() == search_text_clean.lower()
@@ -176,7 +182,6 @@ class GradeDialog(QDialog):
         )
 
         if is_exact_match:
-            item.setCheckState(CHECKED)
             item.setBackground(QColor("#2d5a2d"))
             item.setForeground(QColor("#ffffff"))
             item.setToolTip(
@@ -187,13 +192,11 @@ class GradeDialog(QDialog):
             return
 
         if is_mecab_base_match:
-            item.setCheckState(CHECKED)
             item.setBackground(QColor("#8B6914"))
             item.setForeground(QColor("#ffffff"))
             item.setToolTip("Base form match via MeCab analysis | {}".format(interval_info))
             return
 
-        item.setCheckState(UNCHECKED)
         item.setBackground(QColor("#5a4a2d"))
         item.setForeground(QColor("#ffffff"))
         item.setToolTip("Partial match or token match | {}".format(interval_info))
@@ -239,6 +242,10 @@ class GradeDialog(QDialog):
             if item.checkState() == CHECKED:
                 selected_cards.append(item.data(USER_ROLE))
         return selected_cards
+
+    def select_all_cards(self):
+        for i in range(self.cards_list.count()):
+            self.cards_list.item(i).setCheckState(CHECKED)
 
     def grade_selected_cards(self, grade):
         """Grade the selected cards."""

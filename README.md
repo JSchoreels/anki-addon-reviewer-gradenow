@@ -15,7 +15,7 @@ This addon allows you to right-click on selected text in the Anki reviewer to fi
 2. Right-click on the selected text
 3. Choose "Grade matching cards: [selected text]" from the context menu
 4. A dialog will show all cards that match the selected text
-5. Select which cards you want to grade
+5. Select which cards you want to grade, or use **Select all**
 6. Click one of the grade buttons: Again (1), Hard (2), Good (3), or Easy (4)
 ![grader.png](grader.png)
 
@@ -42,4 +42,4 @@ You can configure the addon through Anki's addon configuration:
 
 - Only cards that are not suspended will be graded
 - The addon will save changes to your collection after grading
-- Exact matches and MeCab base-form matches are checked by default; token or partial matches are unchecked by default
+- Matching cards are unchecked by default; use **Select all** or choose individual cards before grading

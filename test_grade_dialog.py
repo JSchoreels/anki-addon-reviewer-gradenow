@@ -142,6 +142,9 @@ class MockItem:
     def checkState(self):
         return self._checked
 
+    def setCheckState(self, check_state):
+        self._checked = check_state
+
     def data(self, role):
         return self._card_id
 
@@ -323,6 +326,19 @@ class TestReviewerGradeNow(unittest.TestCase):
 
         self.grade_dialog.mw.col.get_card.assert_called_once_with(101)
         dialog.cards_list.addItem.assert_called_once()
+        item = dialog.cards_list.addItem.call_args[0][0]
+        self.assertEqual(item.check_state, self.grade_dialog.UNCHECKED)
+
+    def test_select_all_cards_checks_every_item(self):
+        dialog = self.grade_dialog.GradeDialog.__new__(self.grade_dialog.GradeDialog)
+        item_one = MockItem(self.grade_dialog.UNCHECKED, 101)
+        item_two = MockItem(self.grade_dialog.UNCHECKED, 202)
+        dialog.cards_list = MockCardsList([item_one, item_two])
+
+        dialog.select_all_cards()
+
+        self.assertEqual(item_one.checkState(), self.grade_dialog.CHECKED)
+        self.assertEqual(item_two.checkState(), self.grade_dialog.CHECKED)
 
     def test_extract_search_terms_for_non_cjk_is_ordered_and_not_substrings(self):
         terms = self.search.extract_search_terms("alpha beta alpha")
