@@ -327,7 +327,41 @@ class TestReviewerGradeNow(unittest.TestCase):
         self.grade_dialog.mw.col.get_card.assert_called_once_with(101)
         dialog.cards_list.addItem.assert_called_once()
         item = dialog.cards_list.addItem.call_args[0][0]
-        self.assertEqual(item.check_state, self.grade_dialog.UNCHECKED)
+        self.assertEqual(item.check_state, self.grade_dialog.CHECKED)
+
+    def test_populate_cards_list_leaves_multiple_matches_unchecked(self):
+        class MockCard:
+            type = 0
+            left = 0
+            ivl = 0
+
+            def __init__(self, front):
+                self.front = front
+
+            def note(self):
+                return {"Front": self.front, "Reading": ""}
+
+        dialog = self.grade_dialog.GradeDialog.__new__(self.grade_dialog.GradeDialog)
+        dialog.card_ids = [101, 202]
+        dialog.search_text = "x"
+        dialog.config = {"search_field": "Front"}
+        dialog.cards_list = Mock()
+        self.grade_dialog.mecab_analyzer = FakeAnalyzer(available=False)
+        self.grade_dialog.mw.col = Mock()
+        self.grade_dialog.mw.col.get_card.side_effect = [
+            MockCard("x"),
+            MockCard("x suffix"),
+        ]
+
+        dialog.populate_cards_list()
+
+        added_items = [
+            call_args[0][0] for call_args in dialog.cards_list.addItem.call_args_list
+        ]
+        self.assertEqual(
+            [item.check_state for item in added_items],
+            [self.grade_dialog.UNCHECKED, self.grade_dialog.UNCHECKED],
+        )
 
     def test_select_all_cards_checks_every_item(self):
         dialog = self.grade_dialog.GradeDialog.__new__(self.grade_dialog.GradeDialog)

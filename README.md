@@ -2,6 +2,8 @@
 
 This addon allows you to right-click on selected text in the Anki reviewer to find and grade matching cards.
 
+For an AnkiWeb-ready user description and dependency notes, see [ANKIWEB.md](ANKIWEB.md).
+
 ## Features
 
 - Right-click on any selected text in the reviewer
@@ -42,4 +44,4 @@ You can configure the addon through Anki's addon configuration:
 
 - Only cards that are not suspended will be graded
 - The addon will save changes to your collection after grading
-- Matching cards are unchecked by default; use **Select all** or choose individual cards before grading
+- A single matching card is checked by default; multiple matching cards are unchecked by default

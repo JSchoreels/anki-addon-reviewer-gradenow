@@ -136,10 +136,13 @@ class GradeDialog(QDialog):
             )
 
         card_position_data.sort(key=lambda item: item["position"])
+        default_checked = len(card_position_data) == 1
         for card_data in card_position_data:
-            self.cards_list.addItem(self.build_card_item(card_data, mecab_terms))
+            self.cards_list.addItem(
+                self.build_card_item(card_data, mecab_terms, default_checked)
+            )
 
-    def build_card_item(self, card_data, mecab_terms):
+    def build_card_item(self, card_data, mecab_terms, default_checked=False):
         card_id = card_data["card_id"]
         card = card_data["card"]
         note = card_data["note"]
@@ -167,11 +170,15 @@ class GradeDialog(QDialog):
         item = QListWidgetItem(display_text)
         item.setData(USER_ROLE, card_id)
         item.setFlags(item.flags() | ITEM_IS_USER_CHECKABLE)
-        self.apply_match_style(item, field_content, mecab_terms, interval_info)
+        self.apply_match_style(
+            item, field_content, mecab_terms, interval_info, default_checked
+        )
         return item
 
-    def apply_match_style(self, item, field_content, mecab_terms, interval_info):
-        item.setCheckState(UNCHECKED)
+    def apply_match_style(
+        self, item, field_content, mecab_terms, interval_info, default_checked=False
+    ):
+        item.setCheckState(CHECKED if default_checked else UNCHECKED)
         field_content_clean = field_content.strip()
         search_text_clean = self.search_text.strip()
         is_exact_match = field_content_clean.lower() == search_text_clean.lower()
